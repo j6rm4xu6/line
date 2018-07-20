@@ -1,61 +1,49 @@
-<?php
-/**
- * Eric Draken
- * Date: 2016-09-02
- * Time: 4:44 PM
- * Desc: Callback for responding to Line messages
- *       Send 'whoami' to this endpoint to get a reply with your mid.
- */
- 
-// I put constants like 'LINE_CHANNEL_ID' here 
-//require_once __DIR__ . '/../includes/config.php';
-require_once __DIR__ . "/../includes/line-bot-sdk/vendor/autoload.php";
- 
-use LINE\LINEBot;
-use LINE\LINEBot\HTTPClient\GuzzleHTTPClient;
- 
-// Set these values
-$config = [
-    'channelId' => LINE_CHANNEL_ID,
-    'channelSecret' => LINE_CHANNEL_SECRET,
-    'channelMid' => LINE_CHANNEL_MID,
-];
-$sdk = new LINEBot($config, new GuzzleHTTPClient($config));
- 
-$postdata = @file_get_contents("php://input");
-$messages = $sdk->createReceivesFromJSON($postdata);
- 
-// Verify the signature
-// REF: http://line.github.io/line-bot-api-doc/en/api/callback/post.html#signature-verification
-// REF: http://stackoverflow.com/a/541450
-$sigheader = 'X-LINE-ChannelSignature';
-$signature = @$_SERVER[ 'HTTP_'.strtoupper(str_replace('-','_',$sigheader)) ];
-if($signature && $sdk->validateSignature($postdata, $signature)) {
-    // Next, extract the messages
-    if(is_array($messages)) {
-        foreach ($messages as $message) {
-            if ($message instanceof LINEBot\Receive\Message\Text) {
-                $text = $message->getText();
-                if (strtolower(trim($text)) === "whoami") {
-                    $fromMid = $message->getFromMid();
-                    $user = $sdk->getUserProfile($fromMid);
-                    $displayName = $user['contacts'][0]['displayName'];
- 
-                    $reply = "You are $displayName, and your mid is:\n\n$fromMid";
- 
-                    // Send the mid back to the sender and check if the message was delivered
-                    $result = $sdk->sendText([$fromMid], $reply);
-                    if(!$result instanceof LINE\LINEBot\Response\SucceededResponse) {
-                        error_log('LINE error: ' . json_encode($result));
-                    }
-                } else {
-                    // Process normally, or do nothing
-                }
-            } else {
-                // Process other types of LINE messages like image, video, sticker, etc.
-            }
+require('line_config.php');
+$json_content = file_get_contents('php://input');
+$json = json_decode($json_content, true);
+
+// 可以一次送來多筆資料，所以是陣列
+foreach ($json['result'] as $result) {
+    $content = $result['content'];
+    if ($result['eventType'] == '138311609100106403') {
+        // 加入好友或封鎖
+        $mid = $content['params'][0];
+        if ($content['opType'] == 4) {
+            echo '加入好友 ' . $mid;
         }
-    } // Else, error
-} else {
-    error_log('LINE signatures didn\'t match: ' . $signature);
+        if ($content['opType'] == 8) {
+            echo '封鎖 ' . $mid;
+        }
+        // 利用 curl 另外取得 user 資料
+        $profile = curlUserProfileFromLine($mid);
+        echo 'name = ' . $profile['displayName'];
+        echo '<img src="' . $profile['pictureUrl'] . '" />';
+    }
+}
+
+function curlUserProfileFromLine($mid) {
+    $url = 'https://trialbot-api.line.me/v1/profiles?mids=' . $mid;
+    $ch = curl_init($url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, array(
+        'X-Line-ChannelID: ' . LineConfig::getChannelId(),
+        'X-Line-ChannelSecret: ' . LineConfig::getChannelSecret(),
+        'X-Line-Trusted-User-With-ACL: ' . LineConfig::getMID(),
+    ));
+
+    $json_content = curl_exec($ch);
+    curl_close($ch);
+
+    if (!$json_content) {
+        return false;
+    }
+
+    $json = json_decode($json_content, true);
+    foreach ($json['contacts'] as $user) {
+        if ($mid == $user['mid']) {
+            return $user;
+        }
+    }
+
+    return false;
 }
