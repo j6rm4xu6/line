@@ -59,4 +59,3 @@ if($signature && $sdk->validateSignature($postdata, $signature)) {
 } else {
     error_log('LINE signatures didn\'t match: ' . $signature);
 }
-?>
